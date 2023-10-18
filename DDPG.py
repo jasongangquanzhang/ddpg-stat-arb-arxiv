@@ -5,7 +5,7 @@ Created on Thu Jun  9 10:39:56 2022
 @author: sebja
 """
 
-from offset_env import offset_env as Environment
+from MR_env import MR_env as Environment
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -25,7 +25,8 @@ from datetime import datetime
 class ANN(nn.Module):
 
     def __init__(self, n_in, n_out, nNodes, nLayers, 
-                 activation='silu', out_activation=None):
+                 activation='silu', out_activation=None,
+                 scale = 1):
         super(ANN, self).__init__()
         
         self.prop_in_to_h = nn.Linear(n_in, nNodes)
@@ -43,6 +44,7 @@ class ANN(nn.Module):
             self.g= torch.sigmoid()
         
         self.out_activation = out_activation
+        self.scale = scale
 
     def forward(self, x):
 
@@ -55,23 +57,25 @@ class ANN(nn.Module):
         # hidden layer to output layer
         y = self.prop_h_to_out(h)
 
-        if self.out_activation is not None:
-            for i in range(y.shape[-1]):
-                y = self.out_activation[i](y)
+        if self.out_activation == 'tanh':
+            y = torch.tanh(y)
             
+        y = self.scale * y 
+
         return y
 
 
 class DDPG():
 
-    def __init__(self, env: Environment,  
-                 gamma=0.9999,  
-                 n_nodes=36, n_layers=3, 
+    def __init__(self, env: Environment, I_max=10, 
+                 gamma=0.99,  
+                 n_nodes=36, n_layers=6, 
                  lr=1e-3, sched_step_size = 100,
                  name=""):
 
         self.env = env
         self.gamma = gamma
+        self.I_max = I_max
         self.n_nodes = n_nodes
         self.n_layers = n_layers
         self.name =  name
@@ -80,11 +84,9 @@ class DDPG():
         
         self.__initialize_NNs__()
         
-        self.t = []
         self.S = []
-        self.X = []
-        self.nu = []
-        self.p = []
+        self.I = []
+        self.q = []
         self.r = []
         self.epsilon = []
         
@@ -92,26 +94,28 @@ class DDPG():
         self.pi_loss = []
         
         
+        
+        
     def __initialize_NNs__(self):
         
         # policy approximation
         #
-        # features = t, S, X
+        # features = S, I
         #
-        self.pi = {'net': ANN(n_in=3, 
-                              n_out=2, 
+        self.pi = {'net': ANN(n_in=2, 
+                              n_out=1, 
                               nNodes=self.n_nodes, 
                               nLayers=self.n_layers,
-                              out_activation=[lambda y : y, 
-                                              torch.sigmoid()])}
+                              out_activation='tanh',
+                              scale=self.I_max)}
         
         self.pi['optimizer'], self.pi['scheduler'] = self.__get_optim_sched__(self.pi)        
         
         # Q - function approximation
         #
-        # features = t, S, X, nu, p
+        # features = S, I, q
         #
-        self.Q_main = {'net' : ANN(n_in=5, 
+        self.Q_main = {'net' : ANN(n_in=3, 
                                   n_out=1,
                                   nNodes=self.n_nodes, 
                                   nLayers=self.n_layers) }

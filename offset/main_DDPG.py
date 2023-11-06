@@ -1,16 +1,18 @@
 # -*- coding: utf-8 -*-
 
+import os, sys
+sys.path.insert(0, os.path.abspath(".."))
+
 import matplotlib.pyplot as plt
 plt.style.use('paper.mplstyle')
 
-from offest_env import offest_env
-from DDPG import DDPG
+from offset import DDPG, offset_env
 
 #%%
-env = offset_env(T=1/12, sigma=0.5, kappa=0.03, eta = 0.05, xi=0.1,
+env = offset_env.offset_env(T=1/12, sigma=0.5, kappa=0.03, eta = 0.05, xi=0.1,
                  c=0.25, S0=2.5, R=5, pen=2.5)
 
-ddpg = DDPG(env, I_max = 10,
+ddpg = DDPG.DDPG(env,
             gamma = 0.999, 
             lr=1e-3,
             name="test" )

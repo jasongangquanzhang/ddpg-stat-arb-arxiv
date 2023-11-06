@@ -97,13 +97,14 @@ class DDPG():
         # policy approximation
         #
         # features = t, S, X
+        # out = nu, p
         #
         self.pi = {'net': ANN(n_in=3, 
                               n_out=2, 
                               nNodes=self.n_nodes, 
                               nLayers=self.n_layers,
                               out_activation=[lambda y : y, 
-                                              torch.sigmoid()])}
+                                              torch.sigmoid])}
         
         self.pi['optimizer'], self.pi['scheduler'] = self.__get_optim_sched__(self.pi)        
         
@@ -132,47 +133,58 @@ class DDPG():
     
         return optimizer, scheduler
         
-    def __stack_state__(self, S, I):
-
-        return torch.cat((S.unsqueeze(-1)/self.env.S_0-1.0,
-                          I.unsqueeze(-1)/self.I_max), axis=-1)
+    def __stack_state__(self, t, S, X):
+        # SX = torch.cat((S.unsqueeze(-1)/self.env.S_0-1.0,
+        #                   X.unsqueeze(-1)), axis=-1)
+        # tSX = torch.cat((t.unsqueeze(-1),
+        #                   SX.unsqueeze(-1),), axis=-1)
+     
+        tS = torch.cat((torch.tensor(t).unsqueeze(-1), 
+                        S.unsqueeze(-1)/self.env.S0-1.0), axis=-1)
+        
+        tSX = torch.cat((tS,
+                         X.unsqueeze(-1)), axis=-1)
+        # print(tSX.shape)
+        # tSX = torch.cat((SX.unsqueeze(-1),
+        #                  t.unsqueeze(-1)), axis=0)
+        return tSX
+    
     
     def __grab_mini_batch__(self, mini_batch_size):
-        
-        t = torch.rand((mini_batch_size))*self.env.N
-        # t[-int(mini_batch_size*0.05):] = self.env.N
-        
-        S, I = self.env.Randomize_Start(mini_batch_size)
-        
-        return t, S, I
+        t, S, X = self.env.Randomize_Start(mini_batch_size)
+        return t, S, X
     
     def Update_Q(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
         
         
         for i in range(n_iter):	
             
-            _, S, I = self.__grab_mini_batch__(mini_batch_size)
+            t, S, X = self.__grab_mini_batch__(mini_batch_size)
             
             self.Q_main['optimizer'].zero_grad()
             
             # concatenate states
-            X = self.__stack_state__(S, I)
+            Y = self.__stack_state__(t, S, X)
 
-            I_p = self.pi['net'](X).detach() * torch.exp(epsilon*torch.randn((mini_batch_size,1)))
+            # Y_p = self.pi['net'](Y).detach() * torch.exp (epsilon*torch.randn((mini_batch_size,1)))
+            a = self.pi['net'](Y).detach() * torch.exp (epsilon*torch.randn((mini_batch_size,1)))
             
-            Q = self.Q_main['net']( torch.cat((X, I_p/self.I_max),axis=1) )
+            Q = self.Q_main['net']( torch.cat((Y, a),axis=1) )
                 
             # step in the environment
-            S_p, I_p, r = self.env.step(0, S, I, I_p.reshape(-1))
-            
+            # X_p, r = self.env.step(0, S, X, Y_p.reshape(-1))
+            Y_p, r = self.env.step(Y, a)
+
             # compute the Q(S', a*)
-            X_p = self.__stack_state__(S_p, I_p)
+            # Y_p = self.__stack_state__(S_p, X_p)
 
             # optimal policy at t+1
-            I_pp = self.pi['net'](X_p).detach()
+            # X_pp = self.pi['net'](X_p).detach()
+            a_p = self.pi['net'](Y_p).detach()
             
             # compute the target for Q
-            target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((X_p, I_pp/self.I_max),axis=1))
+            # target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((X_p, X_pp),axis=1))
+            target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((Y_p, a_p),axis=1))
             
             loss = torch.mean((target.detach() - Q)**2)
             
@@ -191,16 +203,16 @@ class DDPG():
         
         for i in range(n_iter):
             
-            _, S, I = self.__grab_mini_batch__(mini_batch_size)
+            t, S, X = self.__grab_mini_batch__(mini_batch_size)
             
             self.pi['optimizer'].zero_grad()
             
             # concatenate states 
-            X = self.__stack_state__(S, I)
+            Y = self.__stack_state__(t, S, X)
 
-            I_p = self.pi['net'](X)
+            a = self.pi['net'](Y)
             
-            Q = self.Q_main['net']( torch.cat((X, I_p/self.I_max),axis=1) )
+            Q = self.Q_main['net']( torch.cat((Y, a),axis=1) )
             
             loss = -torch.mean(Q)
                 
@@ -244,7 +256,7 @@ class DDPG():
                 
                 self.loss_plots()
                 self.run_strategy(1_000, name= datetime.now().strftime("%H_%M_%S"), N=100)
-                self.plot_policy()
+                # self.plot_policy()
                 # self.plot_policy(name=datetime.now().strftime("%H_%M_%S"))
                 
     def moving_average(self, x, n):
@@ -293,34 +305,44 @@ class DDPG():
         if N is None:
             N = self.env.N
         
-        S = torch.zeros((nsims, N+1)).float()
-        I  = torch.zeros((nsims, N+1)).float()
-        I_p = torch.zeros((nsims, N+1)).float()
+        # S = torch.zeros((nsims, N+1)).float()
+        S = torch.zeros((nsims, N)).float()
+        # X = torch.zeros((nsims, N+1)).float()
+        X = torch.zeros((nsims, N)).float()
+        # a = torch.zeros((nsims, 2, N+1)).float()
+        a = torch.zeros((nsims, 2, N)).float()
         r = torch.zeros((nsims, N)).float()
 
-        S0 = self.env.S_0
-        I0 = 0
 
-        S[:,0] = S0
-        I[:,0] = 0
+        S[:,0] = self.env.S0
+        X[:,0] = 0
         
         ones = torch.ones(nsims)
         
         for t in range(N):
 
-            X = self.__stack_state__(S[:,t], I[:,t])
+            # X = self.__stack_state__(S[:,t], I[:,t])
+            # Y = self.__stack_state__(self.env.t[t]*ones ,S[:,t], X[:,t])
+            Y = self.__stack_state__(self.env.dt*t*ones/self.env.T ,S[:,t], X[:,t])
             
-            I_p[:,t] = self.pi['net'](X).reshape(-1)
+            # I_p[:,t] = self.pi['net'](X).reshape(-1)
+            a[:,:,t] = self.pi['net'](Y)
 
-            S[:,t+1], I[:,t+1], r[:,t] = \
-                self.env.step(t*ones, S[:,t], I[:,t], I_p[:,t])
+            Y_p, r[:,t] = \
+                self.env.step(Y, a[:,:,t])
+            S[:, t] = Y_p[:,1]
+            X[:, t] = Y_p[:,2]
+            
+
                 
         S = S.detach().numpy()
-        I  = I.detach().numpy()
-        I_p = I_p.detach().numpy()
+        X  = X.detach().numpy()
+        a = a.detach().numpy()
         r = r.detach().numpy()
 
-        t = self.env.dt*np.arange(0, N+1)/self.env.T
+        # t = self.env.dt*np.arange(0, N+1)/self.env.T
+        t = self.env.dt*np.arange(0, N)/self.env.T
+        # t = self.env.t
         
         plt.figure(figsize=(5,5))
         n_paths = 3
@@ -334,7 +356,7 @@ class DDPG():
             # print(qtl.shape)
             
             plt.subplot(2, 2, plt_i)
-            
+            # print(qtl.shape, t.shape)
             plt.fill_between(t, qtl[0,:], qtl[2,:], alpha=0.5)
             plt.plot(t, qtl[1,:], color='k', linewidth=1)
             plt.plot(t, x[:n_paths, :].T, linewidth=1)
@@ -342,10 +364,17 @@ class DDPG():
             # plt.xticks([0,0.5,1])
             plt.title(title)
             plt.xlabel(r"$t$")
-            
+
+        print(t.shape, S.shape, S[:,0].shape)
+        print( S[:,0].reshape(S.shape[0],-1).shape, (S-S[:,0].reshape(S.shape[0],-1)).shape)
+
+        # (52,) (1000, 51) (1000,)
+        # (1000, 1) (1000, 51)
+
         plot(t, (S-S[:,0].reshape(S.shape[0],-1)), 1, r"$S_t-S_0$" )
-        plot(t, I, 2, r"$I_t$")
-        plot(t[:-1], np.cumsum(r, axis=1), 3, r"$r_t$")
+        plot(t, X, 2, r"$X_t$")
+        # plot(t[:-1], np.cumsum(r, axis=1), 3, r"$r_t$")
+        plot(t, np.cumsum(r, axis=1), 3, r"$r_t$")
 
         plt.subplot(2,2, 4)
         plt.hist(np.sum(r,axis=1), bins=51)
@@ -375,9 +404,13 @@ class DDPG():
         # print(zy0, np.mean(zy[:,-1]>zy0))
         # print(qtl)        
         
-        return t, S, I, I_p
+        return t, S, X, a
 
     def plot_policy(self, name=""):
+        '''
+        TODO: need to update for offset
+        
+        '''
         
         NS = 101
         

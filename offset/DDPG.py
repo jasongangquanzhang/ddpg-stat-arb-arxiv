@@ -111,7 +111,7 @@ class DDPG():
         # Q - function approximation
         #
         # features = t, S, X, nu, p
-        #
+        # out = Q
         self.Q_main = {'net' : ANN(n_in=5, 
                                   n_out=1,
                                   nNodes=self.n_nodes, 
@@ -134,19 +134,10 @@ class DDPG():
         return optimizer, scheduler
         
     def __stack_state__(self, t, S, X):
-        # SX = torch.cat((S.unsqueeze(-1)/self.env.S_0-1.0,
-        #                   X.unsqueeze(-1)), axis=-1)
-        # tSX = torch.cat((t.unsqueeze(-1),
-        #                   SX.unsqueeze(-1),), axis=-1)
-     
         tS = torch.cat((torch.tensor(t).unsqueeze(-1), 
                         S.unsqueeze(-1)/self.env.S0-1.0), axis=-1)
-        
         tSX = torch.cat((tS,
                          X.unsqueeze(-1)), axis=-1)
-        # print(tSX.shape)
-        # tSX = torch.cat((SX.unsqueeze(-1),
-        #                  t.unsqueeze(-1)), axis=0)
         return tSX
     
     
@@ -166,7 +157,6 @@ class DDPG():
             # concatenate states
             Y = self.__stack_state__(t, S, X)
 
-            # Y_p = self.pi['net'](Y).detach() * torch.exp (epsilon*torch.randn((mini_batch_size,1)))
             a = self.pi['net'](Y).detach() * torch.exp (epsilon*torch.randn((mini_batch_size,1)))
             
             Q = self.Q_main['net']( torch.cat((Y, a),axis=1) )
@@ -176,14 +166,11 @@ class DDPG():
             Y_p, r = self.env.step(Y, a)
 
             # compute the Q(S', a*)
-            # Y_p = self.__stack_state__(S_p, X_p)
 
             # optimal policy at t+1
-            # X_pp = self.pi['net'](X_p).detach()
             a_p = self.pi['net'](Y_p).detach()
             
             # compute the target for Q
-            # target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((X_p, X_pp),axis=1))
             target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((Y_p, a_p),axis=1))
             
             loss = torch.mean((target.detach() - Q)**2)
@@ -256,7 +243,7 @@ class DDPG():
                 
                 self.loss_plots()
                 self.run_strategy(1_000, name= datetime.now().strftime("%H_%M_%S"), N=100)
-                # self.plot_policy()
+                self.plot_policy()
                 # self.plot_policy(name=datetime.now().strftime("%H_%M_%S"))
                 
     def moving_average(self, x, n):
@@ -305,10 +292,10 @@ class DDPG():
         if N is None:
             N = self.env.N
         
-        # S = torch.zeros((nsims, N+1)).float()
-        S = torch.zeros((nsims, N)).float()
-        # X = torch.zeros((nsims, N+1)).float()
-        X = torch.zeros((nsims, N)).float()
+        S = torch.zeros((nsims, N+1)).float()
+        # S = torch.zeros((nsims, N)).float()
+        X = torch.zeros((nsims, N+1)).float()
+        # X = torch.zeros((nsims, N)).float()
         # a = torch.zeros((nsims, 2, N+1)).float()
         a = torch.zeros((nsims, 2, N)).float()
         r = torch.zeros((nsims, N)).float()
@@ -320,8 +307,6 @@ class DDPG():
         ones = torch.ones(nsims)
         
         for t in range(N):
-
-            # X = self.__stack_state__(S[:,t], I[:,t])
             # Y = self.__stack_state__(self.env.t[t]*ones ,S[:,t], X[:,t])
             Y = self.__stack_state__(self.env.dt*t*ones/self.env.T ,S[:,t], X[:,t])
             
@@ -330,8 +315,8 @@ class DDPG():
 
             Y_p, r[:,t] = \
                 self.env.step(Y, a[:,:,t])
-            S[:, t] = Y_p[:,1]
-            X[:, t] = Y_p[:,2]
+            S[:, t+1] = Y_p[:,1]
+            X[:, t+1] = Y_p[:,2]
             
 
                 
@@ -340,8 +325,10 @@ class DDPG():
         a = a.detach().numpy()
         r = r.detach().numpy()
 
-        # t = self.env.dt*np.arange(0, N+1)/self.env.T
-        t = self.env.dt*np.arange(0, N)/self.env.T
+        self.X_max = np.amax(X)
+
+        t = self.env.dt*np.arange(0, N+1)/self.env.T
+        # t = self.env.dt*np.arange(0, N)/self.env.T
         # t = self.env.t
         
         plt.figure(figsize=(5,5))
@@ -365,16 +352,15 @@ class DDPG():
             plt.title(title)
             plt.xlabel(r"$t$")
 
-        print(t.shape, S.shape, S[:,0].shape)
-        print( S[:,0].reshape(S.shape[0],-1).shape, (S-S[:,0].reshape(S.shape[0],-1)).shape)
-
-        # (52,) (1000, 51) (1000,)
-        # (1000, 1) (1000, 51)
+        # print(t.shape, S.shape, S[:,0].shape)
+        # print( S[:,0].reshape(S.shape[0],-1).shape, (S-S[:,0].reshape(S.shape[0],-1)).shape)
+        # # (52,) (1000, 51) (1000,)
+        # # (1000, 1) (1000, 51)
 
         plot(t, (S-S[:,0].reshape(S.shape[0],-1)), 1, r"$S_t-S_0$" )
         plot(t, X, 2, r"$X_t$")
-        # plot(t[:-1], np.cumsum(r, axis=1), 3, r"$r_t$")
-        plot(t, np.cumsum(r, axis=1), 3, r"$r_t$")
+        plot(t[:-1], np.cumsum(r, axis=1), 3, r"$r_t$")
+        # plot(t, np.cumsum(r, axis=1), 3, r"$r_t$")
 
         plt.subplot(2,2, 4)
         plt.hist(np.sum(r,axis=1), bins=51)
@@ -383,26 +369,7 @@ class DDPG():
         plt.tight_layout()
         
         plt.savefig("path_"  +self.name + "_" + name + ".pdf", format='pdf', bbox_inches='tight')
-        plt.show()
-        
-        # zy0 = self.env.swap_price(zx[0,0], rx[0,0], ry[0,0])
-        # plt.hist(zy[:,-1],bins=np.linspace(51780,51810,31), density=True, label='optimal')
-        # qtl_levels = [0.05,0.5,0.95]
-        # qtl = np.quantile(zy[:,-1],qtl_levels)
-        # c=['r','b','g']
-        # for i, q in enumerate(qtl):
-        #     plt.axvline(qtl[i], linestyle='--', 
-        #                 linewidth=2, 
-        #                 color=c[i],
-        #                 label=r'${0:0.2f}$'.format(qtl_levels[i]))
-        # plt.axvline(zy0,linestyle='--',color='k', label='swap-all')
-        # plt.xlabel(r'$z_T^y$')
-        # plt.legend()
-        # plt.savefig('ddqn_zy_T.pdf', format='pdf',bbox_inches='tight')
-        # plt.show()
-        
-        # print(zy0, np.mean(zy[:,-1]>zy0))
-        # print(qtl)        
+        plt.show()      
         
         return t, S, X, a
 
@@ -414,34 +381,35 @@ class DDPG():
         
         NS = 101
         
-        S = torch.linspace(self.env.S_0 - 3*self.env.inv_vol, 
-                           self.env.S_0 + 3*self.env.inv_vol,
+        S = torch.linspace(self.env.S0 - 3*self.env.inv_vol, 
+                           self.env.S0 + 3*self.env.inv_vol,
                            NS)
         NI = 51
-        I = torch.linspace(-self.I_max, self.I_max, NI)
+        # I = torch.linspace(-self.I_max, self.I_max, NI)
+        X = torch.linspace(-self.X_max, self.X_max, NI)
         
-        Sm, Im = torch.meshgrid(S, I,indexing='ij')
+        Sm, Xm = torch.meshgrid(S, X,indexing='ij')
         
         def plot(a, title):
             
             fig, ax = plt.subplots()
             plt.title("Inventory vs Price Heatmap for Time T")
             
-            cs = plt.contourf(Sm.numpy(), Im.numpy(), a, 
-                              levels=np.linspace(-self.I_max, self.I_max, 21),
+            cs = plt.contourf(Sm.numpy(), Xm.numpy(), a, 
+                              levels=np.linspace(-self.X_max, self.X_max, 21),
                               cmap='RdBu')
-            plt.axvline(self.env.S_0, linestyle='--', color='g')
-            plt.axvline(self.env.S_0-2*self.env.inv_vol, linestyle='--', color='k')
-            plt.axvline(self.env.S_0+2*self.env.inv_vol, linestyle='--', color='k')
+            plt.axvline(self.env.S0, linestyle='--', color='g')
+            plt.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
+            plt.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
             plt.axhline(0, linestyle='--', color='k')
-            plt.axhline(self.I_max/2, linestyle='--', color='k')
-            plt.axhline(-self.I_max/2, linestyle='--', color='k')
+            plt.axhline(self.X_max/2, linestyle='--', color='k')
+            plt.axhline(-self.X_max/2, linestyle='--', color='k')
             ax.set_xlabel("Price")
             ax.set_ylabel("Inventory")
             ax.set_title(title)
             
             cbar = fig.colorbar(cs, ax=ax, shrink=0.9)
-            cbar.set_ticks(np.linspace(-self.I_max, self.I_max, 11))
+            cbar.set_ticks(np.linspace(-self.X_max, self.X_max, 11))
             cbar.ax.set_ylabel('Action')
                 
             plt.tight_layout()
@@ -451,9 +419,15 @@ class DDPG():
         # X = torch.cat( ((Sm.unsqueeze(-1)/self.env.S_0-1.0), 
         #                 Im.unsqueeze(-1)/self.I_max), axis=-1)
         
-        X = self.__stack_state__(Sm, Im)
+        t = torch.tensor(self.env.dt*np.arange(0, NS)/self.env.T).reshape(-1,1).repeat(1,NI)
+        # print(t.shape, Sm.shape, Xm.shape)
+        # import time
+        # time.sleep(5)
+        Y = self.__stack_state__(t, Sm, Xm)
         
-        a = self.pi['net'](X).detach().squeeze()
-        
-        plot(a, r"")        
+        a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
+        # print(a.shape)
+        # import time
+        # time.sleep(5)
+        plot(a[:,:,0].squeeze(), r"")        
         

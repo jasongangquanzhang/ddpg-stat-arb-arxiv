@@ -29,6 +29,7 @@ class offset_env():
         self.N = N
         self.t = np.linspace(0,self.T, self.N)
         self.dt = self.t[1]-self.t[0]  # time steps
+        self.inv_vol = self.sigma/np.sqrt(2.0*self.kappa)
         
     def Randomize_Start(self, mini_batch_size=10):
         # experiment with distributions

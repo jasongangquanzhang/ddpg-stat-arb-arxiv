@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import torch
 import torch.optim as optim
 import torch.nn as nn
+torch.autograd.set_detect_anomaly(True)
 
 from tqdm import tqdm
 
@@ -134,45 +135,76 @@ class DDPG():
         return optimizer, scheduler
         
     def __stack_state__(self, t, S, X):
+        # normalization happens outside of stack state
         tS = torch.cat((torch.tensor(t).unsqueeze(-1), 
-                        S.unsqueeze(-1)/self.env.S0-1.0), axis=-1)
+                        S.unsqueeze(-1)), axis=-1)
         tSX = torch.cat((tS,
                          X.unsqueeze(-1)), axis=-1)
         return tSX
     
     
     def __grab_mini_batch__(self, mini_batch_size):
-        t, S, X = self.env.Randomize_Start(mini_batch_size)
+        t, S, X = self.env.randomize(mini_batch_size)
         return t, S, X
-    
+   
+    def range_test(self, x, test='prob'):
+        if test=='prob':
+            if torch.amin(x) < 0 or torch.amax(x) > 1:
+                print(torch.amin(x), torch.amax(x))
+
     def Update_Q(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
         
+        # constants
+        nu_norm = torch.exp (epsilon*torch.randn((mini_batch_size,1)))
+        p_const = (1 + torch.exp (-epsilon*torch.randn((mini_batch_size,1)))) ** -1
+        p_const = p_const.squeeze()
         
-        for i in range(n_iter):	
-            
+        for i in range(n_iter): 
+            # constants
+            H = torch.bernoulli(torch.tensor([1/(i+1)]).to(torch.float32))
+
             t, S, X = self.__grab_mini_batch__(mini_batch_size)
             
             self.Q_main['optimizer'].zero_grad()
             
             # concatenate states
             Y = self.__stack_state__(t, S, X)
+            # normalize : Y (tSX)
+            Y[:,0] = Y[:,0] / self.env.T
+            Y[:,1] = Y[:,1] / self.env.S0
+            Y[:,2] = Y[:,2] / self.env.X_max
 
-            a = self.pi['net'](Y).detach() * torch.exp (epsilon*torch.randn((mini_batch_size,1)))
-            
+            # get pi (policy)
+            a = self.pi['net'](Y).detach()
+
+            # perturb : a - for exploration
+            a[:,0] = a[:,0] * nu_norm.squeeze()
+            a[:,1] = a[:,1] * p_const * H + \
+                (1 - (1 - a[:,1]) * p_const) * (1-H)
+
+            # get Q
             Q = self.Q_main['net']( torch.cat((Y, a),axis=1) )
-                
+
+            # denormalize : Y (tSX)
+            Y[:,0] = Y[:,0] * self.env.T
+            Y[:,1] = Y[:,1] * self.env.S0
+            Y[:,2] = Y[:,2] * self.env.X_max
+
             # step in the environment
-            # X_p, r = self.env.step(0, S, X, Y_p.reshape(-1))
             Y_p, r = self.env.step(Y, a)
 
-            # compute the Q(S', a*)
+            # normalize : Y_p (tSX)
+            Y_p[:,0] = Y_p[:,0] * self.env.T
+            Y_p[:,1] = Y_p[:,1] * self.env.S0
+            Y_p[:,2] = Y_p[:,2] * self.env.X_max
 
+            # compute the Q(S', a*)
             # optimal policy at t+1
             a_p = self.pi['net'](Y_p).detach()
-            
+            # We dont normalize - a - the second time
+
             # compute the target for Q
             target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((Y_p, a_p),axis=1))
-            
             loss = torch.mean((target.detach() - Q)**2)
             
             # compute the gradients
@@ -188,7 +220,14 @@ class DDPG():
         
     def Update_pi(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
         
+        # # constants
+        # nu_norm = torch.exp (epsilon*torch.randn((mini_batch_size,1)))
+        # p_const = (1 + torch.exp (-epsilon*torch.randn((mini_batch_size,1)))) ** -1
+        # p_const = p_const.squeeze()
+
         for i in range(n_iter):
+            # # constants
+            # H = torch.bernoulli(torch.tensor([1/(i+1)]).to(torch.float32))
             
             t, S, X = self.__grab_mini_batch__(mini_batch_size)
             
@@ -196,6 +235,11 @@ class DDPG():
             
             # concatenate states 
             Y = self.__stack_state__(t, S, X)
+
+            # normalize : Y (tSX)
+            Y[:,0] = Y[:,0] / self.env.T
+            Y[:,1] = Y[:,1] / self.env.S0
+            Y[:,2] = Y[:,2] / self.env.X_max
 
             a = self.pi['net'](Y)
             
@@ -243,8 +287,8 @@ class DDPG():
                 
                 self.loss_plots()
                 self.run_strategy(1_000, name= datetime.now().strftime("%H_%M_%S"), N=100)
-                self.plot_policy()
-                # self.plot_policy(name=datetime.now().strftime("%H_%M_%S"))
+                # self.plot_policy()
+                self.plot_policy(name=datetime.now().strftime("%H_%M_%S"))
                 
     def moving_average(self, x, n):
         
@@ -293,9 +337,7 @@ class DDPG():
             N = self.env.N
         
         S = torch.zeros((nsims, N+1)).float()
-        # S = torch.zeros((nsims, N)).float()
         X = torch.zeros((nsims, N+1)).float()
-        # X = torch.zeros((nsims, N)).float()
         # a = torch.zeros((nsims, 2, N+1)).float()
         a = torch.zeros((nsims, 2, N)).float()
         r = torch.zeros((nsims, N)).float()
@@ -305,13 +347,27 @@ class DDPG():
         X[:,0] = 0
         
         ones = torch.ones(nsims)
-        
+
         for t in range(N):
-            # Y = self.__stack_state__(self.env.t[t]*ones ,S[:,t], X[:,t])
-            Y = self.__stack_state__(self.env.dt*t*ones/self.env.T ,S[:,t], X[:,t])
+            # Y = self.__stack_state__(self.env.dt*t*ones ,S[:,t], X[:,t])
+            Y = self.__stack_state__((t/N) * self.env.T * ones ,S[:,t], X[:,t])
+            print('t: ', torch.amin(Y[:,0]).item(), torch.amax(Y[:,0]).item())
+            print('S: ', torch.amin(Y[:,1]).item(), torch.amax(Y[:,1]).item())
+            print('X: ', torch.amin(Y[:,2]).item(), torch.amax(Y[:,2]).item())
+            print()
+
+            # normalize : Y (tSX)
+            Y[:,0] = Y[:,0] / self.env.T
+            Y[:,1] = Y[:,1] / self.env.S0
+            Y[:,2] = Y[:,2] / self.env.X_max
             
-            # I_p[:,t] = self.pi['net'](X).reshape(-1)
+            # get policy
             a[:,:,t] = self.pi['net'](Y)
+
+            # denormalize : Y (tSX)
+            Y[:,0] = Y[:,0] * self.env.T
+            Y[:,1] = Y[:,1] * self.env.S0
+            Y[:,2] = Y[:,2] * self.env.X_max
 
             Y_p, r[:,t] = \
                 self.env.step(Y, a[:,:,t])
@@ -325,11 +381,11 @@ class DDPG():
         a = a.detach().numpy()
         r = r.detach().numpy()
 
-        self.X_max = np.amax(X)
+        self.X_max = self.env.X_max
 
-        t = self.env.dt*np.arange(0, N+1)/self.env.T
-        # t = self.env.dt*np.arange(0, N)/self.env.T
-        # t = self.env.t
+        t = self.env.dt*np.arange(0, N+1)
+        # t = self.env.dt*np.arange(0, N+1)/self.env.T
+
         
         plt.figure(figsize=(5,5))
         n_paths = 3
@@ -340,10 +396,9 @@ class DDPG():
             # pdb.set_trace()
             
             qtl= np.quantile(x, [0.05, 0.5, 0.95], axis=0)
-            # print(qtl.shape)
+
             
             plt.subplot(2, 2, plt_i)
-            # print(qtl.shape, t.shape)
             plt.fill_between(t, qtl[0,:], qtl[2,:], alpha=0.5)
             plt.plot(t, qtl[1,:], color='k', linewidth=1)
             plt.plot(t, x[:n_paths, :].T, linewidth=1)
@@ -352,10 +407,6 @@ class DDPG():
             plt.title(title)
             plt.xlabel(r"$t$")
 
-        # print(t.shape, S.shape, S[:,0].shape)
-        # print( S[:,0].reshape(S.shape[0],-1).shape, (S-S[:,0].reshape(S.shape[0],-1)).shape)
-        # # (52,) (1000, 51) (1000,)
-        # # (1000, 1) (1000, 51)
 
         plot(t, (S-S[:,0].reshape(S.shape[0],-1)), 1, r"$S_t-S_0$" )
         plot(t, X, 2, r"$X_t$")
@@ -419,12 +470,19 @@ class DDPG():
         # X = torch.cat( ((Sm.unsqueeze(-1)/self.env.S_0-1.0), 
         #                 Im.unsqueeze(-1)/self.I_max), axis=-1)
         
-        t = torch.tensor(self.env.dt*np.arange(0, NS)/self.env.T).reshape(-1,1).repeat(1,NI)
+        # t = torch.tensor(self.env.dt*np.arange(0, NS)/self.env.T).reshape(-1,1).repeat(1,NI)
+        t = torch.tensor(self.env.dt*np.arange(0, NS)).reshape(-1,1).repeat(1,NI)
         # print(t.shape, Sm.shape, Xm.shape)
         # import time
         # time.sleep(5)
+
         Y = self.__stack_state__(t, Sm, Xm)
-        
+
+        # normalize : Y (tSX)
+        Y[:,0] = Y[:,0] / self.env.T
+        Y[:,1] = Y[:,1] / self.env.S0
+        Y[:,2] = Y[:,2] / self.env.X_max
+
         a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
         # print(a.shape)
         # import time

@@ -383,7 +383,7 @@ class DDPG():
 
         self.X_max = self.env.X_max
 
-        t = self.env.dt*np.arange(0, N+1)
+        t = (1/N) * self.env.T *np.arange(0, N+1)
         # t = self.env.dt*np.arange(0, N+1)/self.env.T
 
         

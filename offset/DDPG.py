@@ -78,6 +78,7 @@ class DDPG():
         self.name =  name
         self.sched_step_size = sched_step_size
         self.lr = lr
+        self.X_max = env.X_max
         
         self.__initialize_NNs__()
         
@@ -386,7 +387,7 @@ class DDPG():
         a = a.detach().numpy()
         r = r.detach().numpy()
 
-        self.X_max = self.env.X_max
+        # self.X_max = self.env.X_max
 
         t = (1/N) * self.env.T *np.arange(0, N+1)
 
@@ -443,39 +444,15 @@ class DDPG():
         
         Sm, Xm = torch.meshgrid(S, X,indexing='ij')
 
-        def plot(a, title, k):
-            
-            fig, ax = plt.subplots(2, 2)
-            plt.title("Inventory vs Price Heatmap for Time T")
-            
-            cs = plt.contourf(Sm.numpy(), Xm.numpy(), a, 
-                              levels=np.linspace(-self.X_max, self.X_max, 21),
-                              cmap='RdBu')
-            plt.axvline(self.env.S0, linestyle='--', color='g')
-            plt.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
-            plt.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
-            plt.axhline(0, linestyle='--', color='k')
-            plt.axhline(self.X_max/2, linestyle='--', color='k')
-            plt.axhline(-self.X_max/2, linestyle='--', color='k')
-            ax.set_xlabel("Price")
-            ax.set_ylabel("Inventory")
-            ax.set_title(title)
-            
-            cbar = fig.colorbar(cs, ax=ax, shrink=0.9)
-            cbar.set_ticks(np.linspace(-self.X_max, self.X_max, 11))
-            cbar.ax.set_ylabel('Action')
-                
-            plt.tight_layout()
-            plt.show()
-
         # plot 
         fig, axs = plt.subplots(2, 2)
-        plt.suptitle("Inventory vs Price Heatmap for Time T")
+        plt.suptitle("Trade Rate Heatmap over Time", y =1.01, fontsize = 'xx-large')
 
-        # t_steps = [0, self.env.T/4, self.env.T/2, self.env.T]
+        t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
         
         for idx, ax in enumerate(axs.flat):
-            t = torch.ones(NS,NX) * self.env.T * (idx / 3)
+            # t = torch.ones(NS,NX) * self.env.T * (idx / 3)
+            t = torch.ones(NS,NX) * self.env.T * t_steps[idx]
             Y = self.__stack_state__(t, Sm, Xm)
             # normalize : Y (tSX)
             Y[:,:,0] = Y[:,:,0] / self.env.T
@@ -484,24 +461,69 @@ class DDPG():
 
             a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
             cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,0], 
-                              levels=np.linspace(-self.X_max, self.X_max, 21),
+                            #   levels=np.linspace(-5*self.X_max, 5*self.X_max, 21),
+                              levels=np.linspace(-50, 50, 21),
                               cmap='RdBu')
+            # print(torch.amin(a[:,:,0]),torch.amax(a[:,:,0]))
             ax.axvline(self.env.S0, linestyle='--', color='g')
             ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
             ax.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
             ax.axhline(0, linestyle='--', color='k')
             ax.axhline(self.X_max/2, linestyle='--', color='k')
             ax.axhline(-self.X_max/2, linestyle='--', color='k')
-            ax.set_xlabel("Price")
-            ax.set_ylabel("Inventory")
-            ax.set_title(f't = {idx} / 3')
+            ax.set_title(r'$t={:.3f}'.format(t_steps[idx]) +'$',fontsize = 'x-large')
         
-            cbar = fig.colorbar(cs, ax=ax, shrink=0.9)
-            cbar.set_ticks(np.linspace(-self.X_max, self.X_max, 11))
-            cbar.ax.set_ylabel('Action')
+        fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
+        fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
+        fig.subplots_adjust(right=0.8)   
+
+        cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
+        cbar = fig.colorbar(cs, ax=cbar_ax)
+        # cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
+        cbar.set_ticks(np.linspace(-50, 50, 11))
+        # cbar.set_ticks(np.linspace(-5*self.X_max, 5*self.X_max, 11))
             
         plt.tight_layout()
         plt.show()
 
-        # plot(a[:,:,0].squeeze(), r"", k)  
+        # plot 
+        fig, axs = plt.subplots(2, 2)
+        plt.suptitle("Probability Heatmap over Time", y =1.01, fontsize = 'xx-large')
+
+        t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
+        
+        for idx, ax in enumerate(axs.flat):
+            # t = torch.ones(NS,NX) * self.env.T * (idx / 3)
+            t = torch.ones(NS,NX) * self.env.T * t_steps[idx]
+            Y = self.__stack_state__(t, Sm, Xm)
+            # normalize : Y (tSX)
+            Y[:,:,0] = Y[:,:,0] / self.env.T
+            Y[:,:,1] = Y[:,:,1] / self.env.S0
+            Y[:,:,2] = Y[:,:,2] / self.env.X_max
+
+            a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
+            cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,1], 
+                              levels=np.linspace(0, 1, 21),
+                              cmap='RdBu')
+
+            ax.axvline(self.env.S0, linestyle='--', color='g')
+            ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
+            ax.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
+            ax.axhline(0, linestyle='--', color='k')
+            ax.axhline(self.X_max/2, linestyle='--', color='k')
+            ax.axhline(-self.X_max/2, linestyle='--', color='k')
+            ax.set_title(r'$t={:.3f}'.format(t_steps[idx]) +'$',fontsize = 'x-large')
+
+        fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
+        fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
+        fig.subplots_adjust(right=0.8)
+
+        cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
+        cbar = fig.colorbar(cs, ax=cbar_ax)
+        # cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
+        cbar.set_ticks(np.linspace(0, 1, 11))
+               
+  
+        plt.tight_layout()
+        plt.show()
     

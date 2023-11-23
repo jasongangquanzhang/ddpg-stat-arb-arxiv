@@ -433,19 +433,15 @@ class DDPG():
         t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
         
         for idx, ax in enumerate(axs.flat):
-            # t = torch.ones(NS,NX) * self.env.T * (idx / 3)
             t = torch.ones(NS,NX) * self.env.T * t_steps[idx]
             Y = self.__stack_state__(t, Sm, Xm)
+            
             # normalize : Y (tSX)
-            Y[:,:,0] = Y[:,:,0] / self.env.T
-            Y[:,:,1] = Y[:,:,1] / self.env.S0
-            Y[:,:,2] = Y[:,:,2] / self.env.X_max
-
-            a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
+            a = self.pi['net'](self.normalize(Y, 'state').to(torch.float32)).detach().squeeze()
             cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,0], 
                               levels=np.linspace(-self.env.pi_max, self.env.pi_max, 21),
                               cmap='RdBu')
-            print(torch.amin(a[:,:,0]),torch.amax(a[:,:,0]))
+            # print(torch.amin(a[:,:,0]),torch.amax(a[:,:,0]))
 
             ax.axvline(self.env.S0, linestyle='--', color='g')
             ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
@@ -457,13 +453,12 @@ class DDPG():
         
         fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
         fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
-        fig.subplots_adjust(right=0.8)   
+        # fig.subplots_adjust(right=0.9)   
 
         cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
-        cbar = fig.colorbar(cs, ax=cbar_ax)
-        # cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
-        cbar.set_ticks(np.linspace(-50, 50, 11))
-        # cbar.set_ticks(np.linspace(-5*self.env.X_max, 5*self.env.X_max, 11))
+        cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
+        cbar.set_ticks(np.linspace(-self.env.pi_max/2, self.env.pi_max/2, 11))
+        # cbar.set_ticks(np.linspace(-50, 50, 11))
             
         plt.tight_layout()
         plt.show()
@@ -475,19 +470,15 @@ class DDPG():
         t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
         
         for idx, ax in enumerate(axs.flat):
-            # t = torch.ones(NS,NX) * self.env.T * (idx / 3)
             t = torch.ones(NS,NX) * self.env.T * t_steps[idx]
             Y = self.__stack_state__(t, Sm, Xm)
-            # normalize : Y (tSX)
-            Y[:,:,0] = Y[:,:,0] / self.env.T
-            Y[:,:,1] = Y[:,:,1] / self.env.S0
-            Y[:,:,2] = Y[:,:,2] / self.env.X_max
 
-            a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
+            # normalize : Y (tSX)
+            a = self.pi['net'](self.normalize(Y, 'state').to(torch.float32)).detach().squeeze()
             cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,1], 
                               levels=np.linspace(0, 1, 21),
                               cmap='RdBu')
-            print(torch.amin(a[:,:,1]),torch.amax(a[:,:,1]))
+            # print(torch.amin(a[:,:,1]),torch.amax(a[:,:,1]))
 
             ax.axvline(self.env.S0, linestyle='--', color='g')
             ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
@@ -499,7 +490,7 @@ class DDPG():
 
         fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
         fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
-        fig.subplots_adjust(right=0.8)
+        # fig.subplots_adjust(right=0.9)
 
         cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
         cbar = fig.colorbar(cs, ax=cbar_ax, location='right')

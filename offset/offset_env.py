@@ -51,7 +51,7 @@ class offset_env():
         mini_batch_size = y.shape[0]
         
         # G = 1 is a generate a credit by investing in a project
-        G = 1*( torch.rand(mini_batch_size) < a[:,1] )
+        G = 1 * (a[:,1] > torch.rand(mini_batch_size))
         
         yp = torch.zeros(y.shape)
         

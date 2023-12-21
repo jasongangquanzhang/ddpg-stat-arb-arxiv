@@ -162,7 +162,7 @@ class DDPG():
             norm[:,1] = norm[:,1] / self.env.S0
             norm[:,2] = norm[:,2] / self.env.X_max
         if typ == 'policy':
-            norm[:,1] = norm[:,1] / self.env.pi_max
+            norm[:,0] = norm[:,0] / self.env.nu_max
         return k/norm
 
     def de_normalize(self, k: torch.tensor, typ: str):
@@ -172,7 +172,7 @@ class DDPG():
             norm[:,1] = norm[:,1] * self.env.S0
             norm[:,2] = norm[:,2] * self.env.X_max
         if typ == 'policy':
-            norm[:,1] = norm[:,1] * self.env.pi_max
+            norm[:,0] = norm[:,0] * self.env.nu_max
         return k*norm
 
     def Update_Q(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
@@ -418,11 +418,10 @@ class DDPG():
         '''
         
         NS = 101
-        S = torch.linspace(self.env.S0 - 3*self.env.inv_vol, 
-                           self.env.S0 + 3*self.env.inv_vol,
-                           NS)
+        S = torch.linspace(0, 1.5 * self.env.pen, NS)
+        
         NX = 51
-        X = torch.linspace(-self.env.X_max, self.env.X_max, NX)
+        X = torch.linspace(-0.1, self.env.X_max, NX)
         
         Sm, Xm = torch.meshgrid(S, X,indexing='ij')
 
@@ -439,16 +438,12 @@ class DDPG():
             # normalize : Y (tSX)
             a = self.pi['net'](self.normalize(Y, 'state').to(torch.float32)).detach().squeeze()
             cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,0], 
-                              levels=np.linspace(-self.env.pi_max, self.env.pi_max, 21),
+                              levels=np.linspace(-self.env.nu_max/2, self.env.nu_max/2, 21),
                               cmap='RdBu')
             # print(torch.amin(a[:,:,0]),torch.amax(a[:,:,0]))
 
-            ax.axvline(self.env.S0, linestyle='--', color='g')
-            ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axhline(0, linestyle='--', color='k')
-            ax.axhline(self.env.X_max/2, linestyle='--', color='k')
-            ax.axhline(-self.env.X_max/2, linestyle='--', color='k')
+            ax.axvline(self.env.S0, linestyle='--', color='k')
+            ax.axhline(self.env.R, linestyle='--', color='k')
             ax.set_title(r'$t={:.3f}'.format(t_steps[idx]) +'$',fontsize = 'x-large')
         
         fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
@@ -457,7 +452,7 @@ class DDPG():
 
         cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
         cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
-        cbar.set_ticks(np.linspace(-self.env.pi_max/2, self.env.pi_max/2, 11))
+        # cbar.set_ticks(np.linspace(-self.env.nu_max/2, self.env.nu_max/2, 11))
         # cbar.set_ticks(np.linspace(-50, 50, 11))
             
         plt.tight_layout()
@@ -465,7 +460,7 @@ class DDPG():
 
         # plot 
         fig, axs = plt.subplots(2, 2)
-        plt.suptitle("Probability Heatmap over Time", y =1.01, fontsize = 'xx-large')
+        plt.suptitle("Generatuib Probability Heatmap over Time", y =1.01, fontsize = 'xx-large')
 
         t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
         
@@ -480,21 +475,15 @@ class DDPG():
                               cmap='RdBu')
             # print(torch.amin(a[:,:,1]),torch.amax(a[:,:,1]))
 
-            ax.axvline(self.env.S0, linestyle='--', color='g')
-            ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axhline(0, linestyle='--', color='k')
-            ax.axhline(self.env.X_max/2, linestyle='--', color='k')
-            ax.axhline(-self.env.X_max/2, linestyle='--', color='k')
+            ax.axvline(self.env.S0, linestyle='--', color='k')
+            ax.axhline(self.env.R, linestyle='--', color='k')
             ax.set_title(r'$t={:.3f}'.format(t_steps[idx]) +'$',fontsize = 'x-large')
 
         fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
         fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
-        # fig.subplots_adjust(right=0.9)
 
         cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
         cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
-        cbar.set_ticks(np.linspace(0, 1, 11))
                
   
         plt.tight_layout()

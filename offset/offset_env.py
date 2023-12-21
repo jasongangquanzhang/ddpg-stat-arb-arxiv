@@ -26,7 +26,7 @@ class offset_env():
         self.R = R 
         self.pen = pen
         self.X_max = 2 * R
-        self.pi_max = 100
+        self.nu_max = 100
         
         self.N = N
         self.t = np.linspace(0,self.T, self.N)
@@ -71,10 +71,6 @@ class offset_env():
         # Reward
         r = -( y[:,1] * nu *self.dt + 0.5*self.kappa * nu**2 * self.dt \
               + self.c * G \
-                #   + self.pen * torch.abs((yp[:,0]-self.T)<1e-10) * torch.maximum(self.R - yp[:,2], 0))
                   + self.pen * (torch.abs(yp[:,0]-self.T)<1e-8).int() * torch.maximum(self.R - yp[:,2], torch.tensor(0)))
-
-        # if torch.amax(yp[:,2]) == torch.nan:
-        #     pdb.set_trace()
         
         return yp, r

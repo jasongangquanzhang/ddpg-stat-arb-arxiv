@@ -78,7 +78,6 @@ class DDPG():
         self.name =  name
         self.sched_step_size = sched_step_size
         self.lr = lr
-        self.X_max = env.X_max
         
         self.__initialize_NNs__()
         
@@ -153,63 +152,72 @@ class DDPG():
             if torch.amin(x) < 0 or torch.amax(x) > 1:
                 print(torch.amin(x), torch.amax(x))
 
+    def normalize(self, k: torch.tensor, typ: str):
+        '''
+        possible types: "state" and "policy"
+        '''
+        norm = torch.ones(k.shape)
+        if typ == 'state':
+            norm[:,0] = norm[:,0] / self.env.T
+            norm[:,1] = norm[:,1] / self.env.S0
+            norm[:,2] = norm[:,2] / self.env.X_max
+        if typ == 'policy':
+            norm[:,0] = norm[:,0] / self.env.nu_max
+        return k/norm
+
+    def de_normalize(self, k: torch.tensor, typ: str):
+        norm = torch.ones(k.shape)
+        if typ == 'state':
+            norm[:,0] = norm[:,0] * self.env.T
+            norm[:,1] = norm[:,1] * self.env.S0
+            norm[:,2] = norm[:,2] * self.env.X_max
+        if typ == 'policy':
+            norm[:,0] = norm[:,0] * self.env.nu_max
+        return k*norm
+
     def Update_Q(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
         
         # constants
-        nu_norm = torch.exp (epsilon*torch.randn((mini_batch_size,1)))
-        p_const = (1 + torch.exp (-epsilon*torch.randn((mini_batch_size,1)))) ** -1
-        p_const = p_const.squeeze()
-        
-        for i in range(n_iter): 
-            # constants
-            H = torch.bernoulli(torch.tensor([1/(i+1)]).to(torch.float32))
+        nu_rand = torch.exp (epsilon*torch.randn((mini_batch_size,1)))
+        p_rand = (1 + torch.exp (-epsilon*torch.randn((mini_batch_size,1)))) ** -1
+        p_rand = p_rand.squeeze()
+        H = torch.bernoulli(
+            epsilon * torch.ones(mini_batch_size).to(torch.float32))
 
+        for i in range(n_iter): 
             t, S, X = self.__grab_mini_batch__(mini_batch_size)
             
             self.Q_main['optimizer'].zero_grad()
             
             # concatenate states
             Y = self.__stack_state__(t, S, X)
+            
             # normalize : Y (tSX)
-            Y[:,0] = Y[:,0] / self.env.T
-            Y[:,1] = Y[:,1] / self.env.S0
-            Y[:,2] = Y[:,2] / self.env.X_max
-
             # get pi (policy)
-            a = self.pi['net'](Y).detach()
+            a = self.pi['net'](self.normalize(Y, 'state')).detach()
 
-            # print(torch.amin(a[:,1]), torch.amax(a[:,1]))
-            # perturb : a - for exploration
-            a[:,0] = a[:,0] * nu_norm.squeeze()
-            a[:,1] = a[:,1] * p_const * H + \
-                (1 - (1 - a[:,1]) * p_const) * (1-H)
-            # print(torch.amin(a[:,0]), torch.amax(a[:,0]))
-            # print()
+            # randomize policy and prob for exploration
+            a[:,0] = a[:,0] * nu_rand.squeeze()
+            a[:,1] = a[:,1] * p_rand * H + \
+                (1 - (1 - a[:,1]) * p_rand) * (1-H)
 
             # get Q
-            Q = self.Q_main['net']( torch.cat((Y, a/100),axis=1) )
-
-            # denormalize : Y (tSX)
-            Y[:,0] = Y[:,0] * self.env.T
-            Y[:,1] = Y[:,1] * self.env.S0
-            Y[:,2] = Y[:,2] * self.env.X_max
+            Q = self.Q_main['net']( torch.cat((
+                self.normalize(Y, 'state'), 
+                self.normalize(a, 'policy')),axis=1) )
 
             # step in the environment
             Y_p, r = self.env.step(Y, a)
 
-            # normalize : Y_p (tSX)
-            Y_p[:,0] = Y_p[:,0] / self.env.T
-            Y_p[:,1] = Y_p[:,1] / self.env.S0
-            Y_p[:,2] = Y_p[:,2] / self.env.X_max
-
             # compute the Q(S', a*)
             # optimal policy at t+1
             a_p = self.pi['net'](Y_p).detach()
-            # We dont normalize - a - the second time
-
+            
             # compute the target for Q
-            target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((Y_p, a_p),axis=1))
-            # target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((Y_p, a_p/100),axis=1))
+            target = r.reshape(-1,1) + self.gamma * \
+                self.Q_target['net'](torch.cat((
+                    self.normalize(Y_p, 'state'), 
+                    self.normalize(a_p, 'policy')),axis=1))
             loss = torch.mean((target.detach() - Q)**2)
             
             # compute the gradients
@@ -224,16 +232,8 @@ class DDPG():
         self.Q_target = copy.deepcopy(self.Q_main)
         
     def Update_pi(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
-        
-        # # constants
-        # nu_norm = torch.exp (epsilon*torch.randn((mini_batch_size,1)))
-        # p_const = (1 + torch.exp (-epsilon*torch.randn((mini_batch_size,1)))) ** -1
-        # p_const = p_const.squeeze()
 
         for i in range(n_iter):
-            # # constants
-            # H = torch.bernoulli(torch.tensor([1/(i+1)]).to(torch.float32))
-            
             t, S, X = self.__grab_mini_batch__(mini_batch_size)
             
             self.pi['optimizer'].zero_grad()
@@ -241,14 +241,11 @@ class DDPG():
             # concatenate states 
             Y = self.__stack_state__(t, S, X)
 
-            # normalize : Y (tSX)
-            Y[:,0] = Y[:,0] / self.env.T
-            Y[:,1] = Y[:,1] / self.env.S0
-            Y[:,2] = Y[:,2] / self.env.X_max
-
-            a = self.pi['net'](Y)
+            a = self.pi['net'](self.normalize(Y, 'state'))
             
-            Q = self.Q_main['net']( torch.cat((Y, a/100),axis=1) )
+            Q = self.Q_main['net']( torch.cat((
+                self.normalize(Y, 'state'), 
+                self.normalize(a, 'policy')),axis=1) )
             
             loss = -torch.mean(Q)
                 
@@ -266,6 +263,7 @@ class DDPG():
               n_plot=100):
         
         self.run_strategy(1_000, name= datetime.now().strftime("%H_%M_%S"))
+        self.plot_policy(name=datetime.now().strftime("%H_%M_%S"))
 
         C = 100
         D = 100
@@ -343,7 +341,6 @@ class DDPG():
         
         S = torch.zeros((nsims, N+1)).float()
         X = torch.zeros((nsims, N+1)).float()
-        # a = torch.zeros((nsims, 2, N+1)).float()
         a = torch.zeros((nsims, 2, N)).float()
         r = torch.zeros((nsims, N)).float()
 
@@ -353,45 +350,32 @@ class DDPG():
         
         ones = torch.ones(nsims)
 
-        for t in range(N):
+        for k in range(N):
             # Y = self.__stack_state__(self.env.dt*t*ones ,S[:,t], X[:,t])
-            Y = self.__stack_state__((t/N) * self.env.T * ones ,S[:,t], X[:,t])
-            # print('t: ', torch.amin(Y[:,0]).item(), torch.amax(Y[:,0]).item())
-            # print('S: ', torch.amin(Y[:,1]).item(), torch.amax(Y[:,1]).item())
-            # print('X: ', torch.amin(Y[:,2]).item(), torch.amax(Y[:,2]).item())
-            # print()
+            Y = self.__stack_state__((k/N) * self.env.T * ones ,S[:,k], X[:,k])
 
             # normalize : Y (tSX)
-            Y[:,0] = Y[:,0] / self.env.T
-            Y[:,1] = Y[:,1] / self.env.S0
-            Y[:,2] = Y[:,2] / self.env.X_max
-            
             # get policy
-            a[:,:,t] = self.pi['net'](Y)
+            a[:,:,k] = self.pi['net'](self.normalize(Y, 'state'))
 
-            # denormalize : Y (tSX)
-            Y[:,0] = Y[:,0] * self.env.T
-            Y[:,1] = Y[:,1] * self.env.S0
-            Y[:,2] = Y[:,2] * self.env.X_max
-
-            Y_p, r[:,t] = \
-                self.env.step(Y, a[:,:,t])
-            S[:, t+1] = Y_p[:,1]
-            X[:, t+1] = Y_p[:,2]
+            # step in environment
+            Y_p, r[:,k] = self.env.step(Y, a[:,:,k])
+        
+            # update subsequent state and inventory
+            S[:, k+1] = Y_p[:,1]
+            X[:, k+1] = Y_p[:,2]
             
         # print(torch.cat( (torch.amin(a[:,0,:], dim = 0).unsqueeze(-1), torch.amax(a[:,0,:].unsqueeze(-1), dim = 0)) , dim=-1))
         # print(a[:,0,:])
                 
+
         S = S.detach().numpy()
         X  = X.detach().numpy()
         a = a.detach().numpy()
         r = r.detach().numpy()
 
-        # self.X_max = self.env.X_max
-
         t = (1/N) * self.env.T *np.arange(0, N+1)
 
-        
         plt.figure(figsize=(5,5))
         n_paths = 3
         
@@ -399,10 +383,8 @@ class DDPG():
             
             # print(x.shape)
             # pdb.set_trace()
-            
             qtl= np.quantile(x, [0.05, 0.5, 0.95], axis=0)
 
-            
             plt.subplot(2, 2, plt_i)
             plt.fill_between(t, qtl[0,:], qtl[2,:], alpha=0.5)
             plt.plot(t, qtl[1,:], color='k', linewidth=1)
@@ -436,11 +418,10 @@ class DDPG():
         '''
         
         NS = 101
-        S = torch.linspace(self.env.S0 - 3*self.env.inv_vol, 
-                           self.env.S0 + 3*self.env.inv_vol,
-                           NS)
+        S = torch.linspace(0, 1.5 * self.env.pen, NS)
+        
         NX = 51
-        X = torch.linspace(-self.X_max, self.X_max, NX)
+        X = torch.linspace(-0.1, self.env.X_max, NX)
         
         Sm, Xm = torch.meshgrid(S, X,indexing='ij')
 
@@ -451,77 +432,58 @@ class DDPG():
         t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
         
         for idx, ax in enumerate(axs.flat):
-            # t = torch.ones(NS,NX) * self.env.T * (idx / 3)
             t = torch.ones(NS,NX) * self.env.T * t_steps[idx]
             Y = self.__stack_state__(t, Sm, Xm)
+            
             # normalize : Y (tSX)
-            Y[:,:,0] = Y[:,:,0] / self.env.T
-            Y[:,:,1] = Y[:,:,1] / self.env.S0
-            Y[:,:,2] = Y[:,:,2] / self.env.X_max
-
-            a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
+            a = self.pi['net'](self.normalize(Y, 'state').to(torch.float32)).detach().squeeze()
             cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,0], 
-                            #   levels=np.linspace(-5*self.X_max, 5*self.X_max, 21),
-                              levels=np.linspace(-50, 50, 21),
+                              levels=np.linspace(-self.env.nu_max/2, self.env.nu_max/2, 21),
                               cmap='RdBu')
             # print(torch.amin(a[:,:,0]),torch.amax(a[:,:,0]))
-            ax.axvline(self.env.S0, linestyle='--', color='g')
-            ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axhline(0, linestyle='--', color='k')
-            ax.axhline(self.X_max/2, linestyle='--', color='k')
-            ax.axhline(-self.X_max/2, linestyle='--', color='k')
+
+            ax.axvline(self.env.S0, linestyle='--', color='k')
+            ax.axhline(self.env.R, linestyle='--', color='k')
             ax.set_title(r'$t={:.3f}'.format(t_steps[idx]) +'$',fontsize = 'x-large')
         
         fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
         fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
-        fig.subplots_adjust(right=0.8)   
+        # fig.subplots_adjust(right=0.9)   
 
         cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
-        cbar = fig.colorbar(cs, ax=cbar_ax)
-        # cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
-        cbar.set_ticks(np.linspace(-50, 50, 11))
-        # cbar.set_ticks(np.linspace(-5*self.X_max, 5*self.X_max, 11))
+        cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
+        # cbar.set_ticks(np.linspace(-self.env.nu_max/2, self.env.nu_max/2, 11))
+        # cbar.set_ticks(np.linspace(-50, 50, 11))
             
         plt.tight_layout()
         plt.show()
 
         # plot 
         fig, axs = plt.subplots(2, 2)
-        plt.suptitle("Probability Heatmap over Time", y =1.01, fontsize = 'xx-large')
+        plt.suptitle("Generatuib Probability Heatmap over Time", y =1.01, fontsize = 'xx-large')
 
         t_steps = [0, self.env.T/4, self.env.T/2, (self.env.T - self.env.dt)]
         
         for idx, ax in enumerate(axs.flat):
-            # t = torch.ones(NS,NX) * self.env.T * (idx / 3)
             t = torch.ones(NS,NX) * self.env.T * t_steps[idx]
             Y = self.__stack_state__(t, Sm, Xm)
-            # normalize : Y (tSX)
-            Y[:,:,0] = Y[:,:,0] / self.env.T
-            Y[:,:,1] = Y[:,:,1] / self.env.S0
-            Y[:,:,2] = Y[:,:,2] / self.env.X_max
 
-            a = self.pi['net'](Y.to(torch.float32)).detach().squeeze()
+            # normalize : Y (tSX)
+            a = self.pi['net'](self.normalize(Y, 'state').to(torch.float32)).detach().squeeze()
             cs = ax.contourf(Sm.numpy(), Xm.numpy(), a[:,:,1], 
                               levels=np.linspace(0, 1, 21),
                               cmap='RdBu')
+            # print(torch.amin(a[:,:,1]),torch.amax(a[:,:,1]))
 
-            ax.axvline(self.env.S0, linestyle='--', color='g')
-            ax.axvline(self.env.S0-2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axvline(self.env.S0+2*self.env.inv_vol, linestyle='--', color='k')
-            ax.axhline(0, linestyle='--', color='k')
-            ax.axhline(self.X_max/2, linestyle='--', color='k')
-            ax.axhline(-self.X_max/2, linestyle='--', color='k')
+            ax.axvline(self.env.S0, linestyle='--', color='k')
+            ax.axhline(self.env.R, linestyle='--', color='k')
             ax.set_title(r'$t={:.3f}'.format(t_steps[idx]) +'$',fontsize = 'x-large')
 
         fig.text(0.5, -0.01, 'OC Price', ha='center',fontsize = 'x-large')
         fig.text(-0.01, 0.5, 'Inventory', va='center', rotation='vertical',fontsize = 'x-large')
-        fig.subplots_adjust(right=0.8)
 
         cbar_ax = fig.add_axes([1.04, 0.15, 0.05, 0.7])
-        cbar = fig.colorbar(cs, ax=cbar_ax)
-        # cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
-        cbar.set_ticks(np.linspace(0, 1, 11))
+        cbar = fig.colorbar(cs, ax=cbar_ax, location='right')
                
   
         plt.tight_layout()

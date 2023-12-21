@@ -26,25 +26,24 @@ class offset_env():
         self.R = R 
         self.pen = pen
         self.X_max = 2 * R
+        self.nu_max = 100
         
         self.N = N
         self.t = np.linspace(0,self.T, self.N)
         self.dt = self.t[1]-self.t[0]  # time steps
-        self.inv_vol = self.sigma/np.sqrt(2.0*self.kappa)
+        self.inv_vol = self.sigma * np.sqrt(3 * self.dt)
         
     def randomize(self, mini_batch_size=10):
         # experiment with distributions
         # penalty + N(0,1)
-        S0 = self.S0 + torch.randn(mini_batch_size)
-        # S0 = self.S0 + 3*self.inv_vol*torch.randn(mini_batch_size)
-
+        S0 = self.S0 + torch.randn(mini_batch_size) * self.inv_vol 
         # Unifrom(0,R)
         X0 = torch.rand(mini_batch_size) * self.X_max
-        # X0 = torch.randn(mini_batch_size) + 1
-
-        # t0 = torch.tensor(np.random.choice(self.t[:-1], size=mini_batch_size, replace=True)).to(torch.float32)
-        t0 = (torch.rand(mini_batch_size)*(self.T - self.dt)).to(torch.float32)
-
+        # randomized time 
+        t0 = torch.tensor(np.random.choice(self.t[:-1], size=mini_batch_size, replace=True)).to(torch.float32)
+        idx = np.random.choice(np.linspace(0, mini_batch_size-1), size=int(0.05 * mini_batch_size), replace=False)
+        t0[idx] = (self.T - self.dt)
+        
         return t0, S0, X0
       
     def step(self, y, a):
@@ -52,7 +51,7 @@ class offset_env():
         mini_batch_size = y.shape[0]
         
         # G = 1 is a generate a credit by investing in a project
-        G = 1*( torch.rand(mini_batch_size) < a[:,1] )
+        G = 1 * (a[:,1] > torch.rand(mini_batch_size))
         
         yp = torch.zeros(y.shape)
         
@@ -69,12 +68,9 @@ class offset_env():
         nu = (1-G) * a[:,0]
         yp[:,2] = y[:,2] + self.xi * G + nu * self.dt
         
+        # Reward
         r = -( y[:,1] * nu *self.dt + 0.5*self.kappa * nu**2 * self.dt \
               + self.c * G \
-                #   + self.pen * torch.abs((yp[:,0]-self.T)<1e-10) * torch.maximum(self.R - yp[:,2], 0))
-                  + self.pen * (torch.abs(yp[:,0]-self.T)<1e-10).int() * torch.maximum(self.R - yp[:,2], torch.tensor(0)))
- 
-        # if torch.amax(yp[:,2]) == torch.nan:
-        #     pdb.set_trace()
+                  + self.pen * (torch.abs(yp[:,0]-self.T)<1e-8).int() * torch.maximum(self.R - yp[:,2], torch.tensor(0)))
         
         return yp, r

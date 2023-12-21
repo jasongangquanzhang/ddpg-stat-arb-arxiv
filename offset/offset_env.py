@@ -25,19 +25,19 @@ class offset_env():
         self.S0 = S0
         self.R = R 
         self.pen = pen
-        self.X_max = 2 * R
-        self.nu_max = 100
+        self.X_max = 2.0 * R
+        self.nu_max = 100.0
         
         self.N = N
         self.t = np.linspace(0,self.T, self.N)
         self.dt = self.t[1]-self.t[0]  # time steps
-        self.inv_vol = self.sigma * np.sqrt(3 * self.dt)
+        self.inv_vol = self.sigma * np.sqrt(0.5*self.T )
         
     def randomize(self, mini_batch_size=10):
         # experiment with distributions
         # penalty + N(0,1)
         S0 = self.S0 + torch.randn(mini_batch_size) * self.inv_vol 
-        # Unifrom(0,R)
+        # Unifrom(0,x_max)
         X0 = torch.rand(mini_batch_size) * self.X_max
         # randomized time 
         t0 = torch.tensor(np.random.choice(self.t[:-1], size=mini_batch_size, replace=True)).to(torch.float32)

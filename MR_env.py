@@ -6,11 +6,13 @@ Created on Fri Dec 30 11:41:23 2022
 """
 
 import numpy as np
-import tqdm
+from tqdm import tqdm 
 import pdb
 import torch
 
-
+#
+# dS_t = \kappa ( \theta - S_t) dt + \sigma dW_t
+#
 class MR_env():
 
     def __init__(self, S_0=1300,
@@ -31,6 +33,8 @@ class MR_env():
         self.dt = dt  # time steps
         self.T = T
         self.N = int(self.T/self.dt)+1
+        
+        self.t = torch.linspace(0, self.T, self.N)
         
         self.inv_vol = self.sigma/np.sqrt(2.0*self.kappa)
         self.eff_vol = self.sigma* np.sqrt((1-np.exp(-2*self.kappa*self.dt))/(2*self.kappa))
@@ -62,14 +66,54 @@ class MR_env():
         return S, I
     
     def step(self, t, S, I, I_p):
+        """
+        evolves the sysmte from old state to new state and provides the reward.
+        action = new inventory level
+
+        Parameters
+        ----------
+        t : TYPE
+            DESCRIPTION.
+        S : TYPE
+            DESCRIPTION.
+        I : TYPE
+            DESCRIPTION.
+        I_p : TYPE
+            DESCRIPTION.
+
+        Returns
+        -------
+        S_p : TYPE
+            DESCRIPTION.
+        I_p : TYPE
+            DESCRIPTION.
+        r : TYPE
+            DESCRIPTION.
+
+        """
+        
         
         mini_batch_size = S.shape[0]
-        
+
+        # dS_t = \kappa ( \theta - S_t) dt + \sigma dW_t        
         S_p = self.theta + (S-self.theta)*np.exp(-self.kappa*self.dt) \
             + self.eff_vol *  torch.randn(mini_batch_size)
 
+        # quantity of assets that you must purchase to change from I to I_p
         q = I_p-I
 
+        # reward recieve from the transaction
+        #
+        # X_t = \int_0^t (-S_u dI_u) + I_T S_T - \lambda \int_0^t  |dI_u|
+        #
+        # (follows from Ito's lemma and Ito product rule)
+        # d( I_t S_t) = S_t dI_t + I_t dS_t + d[S,I]_t
+        #             = S_t dI_t + I_t dS_t
+        # I_T S_T  = \int_0^T S_u dI_u + \int_0^T I_u dS_u
+        #
+        # X_T =   \int_0^T I_u dS_u - \lambda \int_0^T  |dI_u|
+        #     = \int_0^T ( I_u dS_u -  \lambda  |dI_u| )
+        #
         r = I_p*(S_p-S) - self.lambd*torch.abs(q)
 
         return S_p, I_p, r

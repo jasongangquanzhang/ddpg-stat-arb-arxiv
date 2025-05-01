@@ -8,8 +8,8 @@ from DDPG import DDPG
 
 #%%
 env = MR_env(S_0=1, kappa=1, sigma=0.2, theta=1,
-             dt=0.25, T = int(20), 
-             I_max=10, lambd=1)
+             dt=0.025, T = 5, 
+             I_max=10, lambd=0.0)
 
 ddpg = DDPG(env, I_max = 10,
             gamma = 0.999, 

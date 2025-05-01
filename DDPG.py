@@ -113,7 +113,7 @@ class DDPG():
         
         # Q - function approximation
         #
-        # features = S, I, q
+        # features = S, I, I_p
         #
         self.Q_main = {'net' : ANN(n_in=3, 
                                   n_out=1,

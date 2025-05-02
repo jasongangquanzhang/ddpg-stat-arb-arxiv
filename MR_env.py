@@ -115,5 +115,6 @@ class MR_env():
         #     = \int_0^T ( I_u dS_u -  \lambda  |dI_u| )
         #
         r = I_p*(S_p-S) - self.lambd*torch.abs(q)
+        
 
         return S_p, I_p, r

@@ -93,6 +93,8 @@ class DDPG():
         self.Q_loss = []
         self.pi_loss = []
         
+        self.tau = 0.001
+        
         
         
         
@@ -102,14 +104,16 @@ class DDPG():
         #
         # features = S, I
         #
-        self.pi = {'net': ANN(n_in=2, 
+        self.pi_main = {'net': ANN(n_in=2, 
                               n_out=1, 
                               nNodes=self.n_nodes, 
                               nLayers=self.n_layers,
                               out_activation='tanh',
                               scale=self.I_max)}
         
-        self.pi['optimizer'], self.pi['scheduler'] = self.__get_optim_sched__(self.pi)        
+        self.pi_main['optimizer'], self.pi_main['scheduler'] = self.__get_optim_sched__(self.pi_main)        
+        
+        self.pi_target = copy.deepcopy(self.pi_main)
         
         # Q - function approximation
         #
@@ -150,7 +154,7 @@ class DDPG():
         
         return t, S, I
     
-    def Update_Q(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
+    def update_Q(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
         
         
         for i in range(n_iter):	
@@ -162,7 +166,8 @@ class DDPG():
             # concatenate states
             X = self.__stack_state__(S, I)
 
-            I_p = self.pi['net'](X).detach() * torch.exp(epsilon*torch.randn((mini_batch_size,1)))
+            I_p = torch.clip(self.pi_main['net'](X).detach() * torch.exp(epsilon*torch.randn((mini_batch_size,1))),
+                             min=-self.I_max, max = self.I_max)
             
             Q = self.Q_main['net']( torch.cat((X, I_p/self.I_max),axis=1) )
                 
@@ -173,7 +178,7 @@ class DDPG():
             X_p = self.__stack_state__(S_p, I_p)
 
             # optimal policy at t+1
-            I_pp = self.pi['net'](X_p).detach()
+            I_pp = self.pi_main['net'](X_p).detach()
             
             # compute the target for Q
             target = r.reshape(-1,1) + self.gamma * self.Q_target['net'](torch.cat((X_p, I_pp/self.I_max),axis=1))
@@ -189,20 +194,20 @@ class DDPG():
             
             self.Q_loss.append(loss.item())
             
-        self.Q_target = copy.deepcopy(self.Q_main)
+            self.soft_update(self.Q_main['net'], self.Q_target['net'])
         
-    def Update_pi(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
+    def update_pi(self, n_iter = 10, mini_batch_size=256, epsilon=0.02):
         
         for i in range(n_iter):
             
             _, S, I = self.__grab_mini_batch__(mini_batch_size)
             
-            self.pi['optimizer'].zero_grad()
+            self.pi_main['optimizer'].zero_grad()
             
             # concatenate states 
             X = self.__stack_state__(S, I)
 
-            I_p = self.pi['net'](X)
+            I_p = self.pi_main['net'](X)
             
             Q = self.Q_main['net']( torch.cat((X, I_p/self.I_max),axis=1) )
             
@@ -210,10 +215,16 @@ class DDPG():
                 
             loss.backward()
             
-            self.pi['optimizer'].step()
-            self.pi['scheduler'].step()
+            self.pi_main['optimizer'].step()
+            self.pi_main['scheduler'].step()
             
             self.pi_loss.append(loss.item())
+
+
+    def soft_update(self, main, target):
+    
+        for param, target_param in zip(main.parameters(), target.parameters()):
+            target_param.data.copy_(self.tau * param.data + (1.0 - self.tau) * target_param.data)
             
     def train(self, n_iter=1_000, 
               n_iter_Q=10, 
@@ -223,7 +234,7 @@ class DDPG():
         
         self.run_strategy(1_000, name= datetime.now().strftime("%H_%M_%S"))
 
-        C = 100
+        C = 50
         D = 100
         
         if len(self.epsilon)==0:
@@ -234,13 +245,15 @@ class DDPG():
             epsilon = np.maximum(C/(D+self.count), 0.02)
             self.epsilon.append(epsilon)
             self.count += 1
+            
+            # pdb.set_trace()
 
              
-            self.Update_Q(n_iter=n_iter_Q, 
+            self.update_Q(n_iter=n_iter_Q, 
                           mini_batch_size=mini_batch_size, 
                           epsilon=epsilon)
             
-            self.Update_pi(n_iter=n_iter_pi, 
+            self.update_pi(n_iter=n_iter_pi, 
                            mini_batch_size=mini_batch_size, 
                            epsilon=epsilon)
 
@@ -314,7 +327,7 @@ class DDPG():
 
             X = self.__stack_state__(S[:,t], I[:,t])
             
-            I_p[:,t] = self.pi['net'](X).reshape(-1)
+            I_p[:,t] = self.pi_main['net'](X).reshape(-1)
 
             S[:,t+1], I[:,t+1], r[:,t] = \
                 self.env.step(t*ones, S[:,t], I[:,t], I_p[:,t])
@@ -424,7 +437,7 @@ class DDPG():
         
         X = self.__stack_state__(Sm, Im)
         
-        a = self.pi['net'](X).detach().squeeze()
+        a = self.pi_main['net'](X).detach().squeeze()
         
         plot(a, r"")        
         

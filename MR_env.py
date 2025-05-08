@@ -30,9 +30,9 @@ class MR_env():
         self.kappa = kappa
         self.lambd = lambd
         
-        self.dt = dt  # time steps
-        self.T = T
-        self.N = int(self.T/self.dt)+1
+        self.dt = dt  # time of one step
+        self.T = T # total time
+        self.N = int(self.T/self.dt)+1 # number of time steps
         
         self.t = torch.linspace(0, self.T, self.N)
         

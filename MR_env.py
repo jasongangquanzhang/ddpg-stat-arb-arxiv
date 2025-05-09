@@ -50,20 +50,20 @@ class MR_env():
         I0 = self.I_max * (2*torch.rand(mini_batch_size)-1)
         
         return S0, I0
+# not even used in the code
+    # def Simulate(self,  mini_batch_size=10):
 
-    def Simulate(self,  mini_batch_size=10):
+    #     S = torch.zeros((mini_batch_size, self.N)).float()
+    #     I = torch.zeros((mini_batch_size, self.N)).float()
 
-        S = torch.zeros((mini_batch_size, self.N)).float()
-        I = torch.zeros((mini_batch_size, self.N)).float()
+    #     S[:, 0] = self.S_0
+    #     I[:, 0] = 0
 
-        S[:, 0] = self.S_0
-        I[:, 0] = 0
+    #     for t in tqdm(range(self.N-1)):
 
-        for t in tqdm(range(self.N-1)):
+    #         S[:, t+1], I[:,t+1], _ = self.step(t*self.dt, S[:,t], I[:,t], 0*I[:,t])
 
-            S[:, t+1], I[:,t+1], _ = self.step(t*self.dt, S[:,t], I[:,t], 0*I[:,t])
-
-        return S, I
+    #     return S, I
     
     def step(self, t, S, I, I_p):
         """

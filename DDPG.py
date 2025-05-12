@@ -183,26 +183,29 @@ class DDPG:
 
             # concatenate states
             X = self.__stack_state__(S, I)
-
+            
+            # compute the action
             I_p = torch.clip(
                 self.pi_main["net"](X).detach()
                 * torch.exp(epsilon * torch.randn((mini_batch_size, 1))),
                 min=-self.I_max,
                 max=self.I_max,
             )
-
+            # compute the value of the action I_p given state X
             Q = self.Q_main["net"](torch.cat((X, I_p / self.I_max), axis=1))
 
-            # step in the environment
+            # step in the environment get the next state and reward
             S_p, I_p, r = self.env.step(0, S, I, I_p.reshape(-1))
 
             # compute the Q(S', a*)
+            # concatenate new state
             X_p = self.__stack_state__(S_p, I_p)
 
-            # optimal policy at t+1
+            # optimal policy at t+1 get the next action I_pp
             I_pp = self.pi_main["net"](X_p).detach()
 
             # compute the target for Q
+            # NOTE: the target is not clipped and Q_target is used
             target = r.reshape(-1, 1) + self.gamma * self.Q_target["net"](
                 torch.cat((X_p, I_pp / self.I_max), axis=1)
             )
@@ -254,16 +257,17 @@ class DDPG:
     def train(
         self, n_iter=1_000, n_iter_Q=10, n_iter_pi=5, mini_batch_size=256, n_plot=100
     ):
-
-        self.run_strategy(nsims=1_000, name=datetime.now().strftime("%H_%M_%S"))
+        
+        self.run_strategy(nsims=1_000, name=datetime.now().strftime("%H_%M_%S")) #intital evaluation
 
         C = 50
         D = 100
-
+    
         if len(self.epsilon) == 0:
             self.count = 0
 
-        for i in tqdm(range(n_iter)):
+        # for i in tqdm(range(n_iter)):
+        for i in range(n_iter):
 
             epsilon = np.maximum(C / (D + self.count), 0.02)
             self.epsilon.append(epsilon)

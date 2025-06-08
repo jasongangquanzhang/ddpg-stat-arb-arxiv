@@ -98,7 +98,6 @@ class DDQN:
         self.epsilon = []
 
         self.Q_loss = []
-        self.pi_loss = []
 
         self.tau = 0.001
 
@@ -159,34 +158,26 @@ class DDQN:
 
             # concatenate states
             X = self.__stack_state__(S, I)
-
+            # compute Q
+            Q = self.Q_main["net"](X)
             # compute the action
-            I_p = torch.clip(
-                self.pi_main["net"](X).detach()
-                * torch.exp(epsilon * torch.randn((mini_batch_size, 1))),
-                min=-self.I_max,
-                max=self.I_max,
-            )
-            # compute the value of the action I_p given state X
-            Q = self.Q_main["net"](torch.cat((X, I_p / self.I_max), axis=1))
-
+            I_p = (2*Q.argmax(dim=1, keepdim=False)-1)*self.I_max
+            Q_value = Q.gather(1, Q.argmax(dim=1, keepdim=False).reshape(-1, 1))
             # step in the environment get the next state and reward
             S_p, I_p, r = self.env.step(0, S, I, I_p.reshape(-1))
 
             # compute the Q(S', a*)
             # concatenate new state
             X_p = self.__stack_state__(S_p, I_p)
-
-            # optimal policy at t+1 get the next action I_pp
-            I_pp = self.pi_main["net"](X_p).detach()
-
+            Q_p = self.Q_main["net"](X_p)
+            I_pp = (2*Q_p.argmax(dim=1, keepdim=False)-1)*self.I_max
             # compute the target for Q
-            # NOTE: the target is not clipped and Q_target is used
-            target = r.reshape(-1, 1) + self.gamma * self.Q_target["net"](
-                torch.cat((X_p, I_pp / self.I_max), axis=1)
+
+            target = r.reshape(-1, 1) + self.gamma * self.Q_target["net"](X_p).gather(
+                1, Q_p.argmax(dim=1, keepdim=False).reshape(-1, 1)
             )
 
-            loss = torch.mean((target.detach() - Q) ** 2)
+            loss = torch.mean((target.detach() - Q_value) ** 2)
 
             # compute the gradients
             loss.backward()
@@ -199,29 +190,6 @@ class DDQN:
 
             self.soft_update(self.Q_main["net"], self.Q_target["net"])
 
-    def update_pi(self, n_iter=10, mini_batch_size=256, epsilon=0.02):
-
-        for i in range(n_iter):
-
-            _, S, I = self.__grab_mini_batch__(mini_batch_size)
-
-            self.pi_main["optimizer"].zero_grad()
-
-            # concatenate states
-            X = self.__stack_state__(S, I)
-
-            I_p = self.pi_main["net"](X)
-
-            Q = self.Q_main["net"](torch.cat((X, I_p / self.I_max), axis=1))
-
-            loss = -torch.mean(Q)
-
-            loss.backward()
-
-            self.pi_main["optimizer"].step()
-            self.pi_main["scheduler"].step()
-
-            self.pi_loss.append(loss.item())
 
     def soft_update(self, main, target):
 
@@ -231,7 +199,7 @@ class DDQN:
             )
 
     def train(
-        self, n_iter=1_000, n_iter_Q=10, n_iter_pi=5, mini_batch_size=256, n_plot=100
+        self, n_iter=1_000, n_iter_Q=10, mini_batch_size=256, n_plot=100
     ):
 
         self.run_strategy(
@@ -257,9 +225,6 @@ class DDQN:
                 n_iter=n_iter_Q, mini_batch_size=mini_batch_size, epsilon=epsilon
             )
 
-            self.update_pi(
-                n_iter=n_iter_pi, mini_batch_size=mini_batch_size, epsilon=epsilon
-            )
 
             if np.mod(i + 1, n_plot) == 0:
 
@@ -307,8 +272,6 @@ class DDQN:
         plt.subplot(1, 2, 1)
         plot(self.Q_loss, r"$Q$", show_band=False)
 
-        plt.subplot(1, 2, 2)
-        plot(self.pi_loss, r"$\pi$")
 
         plt.tight_layout()
         plt.show()
@@ -345,8 +308,8 @@ class DDQN:
         for t in range(N):
 
             X = self.__stack_state__(S[:, t], I[:, t])
-
-            I_p[:, t] = self.pi_main["net"](X).reshape(-1)
+            Q = self.Q_main["net"](X)
+            I_p[:, t] = (2*Q.argmax(dim=1, keepdim=False)-1) * self.I_max
 
             S[:, t + 1], I[:, t + 1], r[:, t] = self.env.step(
                 t * ones, S[:, t], I[:, t], I_p[:, t]
@@ -389,9 +352,9 @@ class DDQN:
 
         plt.tight_layout()
 
-        plt.savefig(
-            "path_" + self.name + "_" + name + ".pdf", format="pdf", bbox_inches="tight"
-        )
+        # plt.savefig(
+        #     "path_" + self.name + "_" + name + ".pdf", format="pdf", bbox_inches="tight"
+        # )
         plt.show()
 
         # zy0 = self.env.swap_price(zx[0,0], rx[0,0], ry[0,0])
@@ -461,6 +424,6 @@ class DDQN:
 
         X = self.__stack_state__(Sm, Im)
 
-        a = self.pi_main["net"](X).detach().squeeze()
+        a = (2*self.Q_main["net"](X).argmax(dim=1, keepdim=False)-1).detach().squeeze()
 
         plot(a, r"")

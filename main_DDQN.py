@@ -17,4 +17,4 @@ ddqn = DDQN(env, I_max = 10,
             name="test" )
  
 #%%    
-ddqn.train(n_iter=10, n_plot=200, n_iter_Q=5)
+ddqn.train(n_iter=10000, n_plot=200, n_iter_Q=5)

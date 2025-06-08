@@ -149,45 +149,48 @@ class DDQN:
         return t, S, I
 
     def update_Q(self, n_iter=10, mini_batch_size=256, epsilon=0.02):
-
         for i in range(n_iter):
-
             _, S, I = self.__grab_mini_batch__(mini_batch_size)
-
             self.Q_main["optimizer"].zero_grad()
 
             # concatenate states
             X = self.__stack_state__(S, I)
-            # compute Q
-            Q = self.Q_main["net"](X)
-            # compute the action
-            I_p = (2*Q.argmax(dim=1, keepdim=False)-1)*self.I_max
-            Q_value = Q.gather(1, Q.argmax(dim=1, keepdim=False).reshape(-1, 1))
-            # step in the environment get the next state and reward
-            S_p, I_p, r = self.env.step(0, S, I, I_p.reshape(-1))
+            Q = self.Q_main["net"](X)  # (batch_size, n_actions)
 
-            # compute the Q(S', a*)
-            # concatenate new state
-            X_p = self.__stack_state__(S_p, I_p)
+            # --- Epsilon-greedy action selection ---
+            batch_size = Q.shape[0]
+            rand_vals = torch.rand(batch_size)
+            random_actions = torch.randint(0, Q.shape[1], (batch_size,))
+            greedy_actions = Q.argmax(dim=1)
+            # With probability epsilon choose random, else greedy
+            actions = torch.where(rand_vals < epsilon, random_actions, greedy_actions)
+            I_p = (2 * actions - 1) * self.I_max  # Map action index to environment action
+
+            # Gather Q-value for chosen action
+            Q_value = Q.gather(1, actions.unsqueeze(1)).squeeze(1)
+
+            # Step in environment to get next state and reward
+            S_p, I_p_env, r = self.env.step(0, S, I, I_p)
+            # New state
+            X_p = self.__stack_state__(S_p, I_p_env)
             Q_p = self.Q_main["net"](X_p)
-            I_pp = (2*Q_p.argmax(dim=1, keepdim=False)-1)*self.I_max
-            # compute the target for Q
+            # Next greedy action for Double DQN
+            next_greedy_actions = Q_p.argmax(dim=1, keepdim=True)
+            # Target value using target net
+            target_q_values = self.Q_target["net"](X_p).gather(1, next_greedy_actions).squeeze(1)
 
-            target = r.reshape(-1, 1) + self.gamma * self.Q_target["net"](X_p).gather(
-                1, Q_p.argmax(dim=1, keepdim=False).reshape(-1, 1)
-            )
+            # Compute target
+            target = r + self.gamma * target_q_values
+            target = target.detach()
 
-            loss = torch.mean((target.detach() - Q_value) ** 2)
-
-            # compute the gradients
+            # Loss
+            loss = torch.mean((Q_value - target) ** 2)
             loss.backward()
-
-            # perform step using those gradients
             self.Q_main["optimizer"].step()
             self.Q_main["scheduler"].step()
-
             self.Q_loss.append(loss.item())
 
+            # Target network soft update
             self.soft_update(self.Q_main["net"], self.Q_target["net"])
 
 
@@ -424,6 +427,6 @@ class DDQN:
 
         X = self.__stack_state__(Sm, Im)
 
-        a = (2*self.Q_main["net"](X).argmax(dim=1, keepdim=False)-1).detach().squeeze()
+        a = ((2*self.Q_main["net"](X).argmax(dim=2, keepdim=False)-1)*self.I_max).detach().squeeze()
 
         plot(a, r"")
